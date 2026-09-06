@@ -1,14 +1,20 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash};
 
-#[derive(Eq, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone)]
 pub struct Bunny {
     pub pos: (usize, usize),
 }
 
-#[derive(Eq, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone)]
 pub struct Fox {
     pub pos1: (usize, usize),
     pub pos2: (usize, usize),
+}
+
+#[derive(PartialEq)]
+enum FoxOrientation {
+    Horizontal,
+    Vertical,
 }
 
 impl Fox {
@@ -18,14 +24,21 @@ impl Fox {
         }
         self
     }
+    fn orientation(&self) -> FoxOrientation {
+        if self.pos1.0 == self.pos2.0 {
+            FoxOrientation::Vertical
+        } else {
+            FoxOrientation::Horizontal
+        }
+    }
 }
 
-#[derive(Eq, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone)]
 pub struct Mushroom {
     pub pos: (usize, usize),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Board {
     pub bunnies: HashSet<Bunny>,
     pub foxes: HashSet<Fox>,
@@ -69,171 +82,6 @@ impl Display for Board {
     }
 }
 
-pub struct Move<'a, T> {
-    pub board: &'a Board,
-    pub from: &'a T,
-    pub to: T,
-}
-
-impl<'a> Move<'a, Bunny> {
-    pub fn new(board: &'a Board, from: &'a Bunny, to: Bunny) -> Self {
-        Move { board, from, to }
-    }
-
-    pub fn is_valid(&self) -> Result<(), InvalidBoardError> {
-        self.board.is_bunny_placement_position_valid(self.to.pos)?;
-        if self.from.pos.0 != self.to.pos.0 && self.from.pos.1 != self.to.pos.1 {
-            // at least one coordinate must be the same, only axis movement is allowed
-            return Err(InvalidBoardError::InvalidPosition); //TODO better error
-        }
-
-        let distance =
-            self.from.pos.0.abs_diff(self.to.pos.0) + self.from.pos.1.abs_diff(self.to.pos.1);
-        if distance <= 1 {
-            // must move at least 2 spaces
-            return Err(InvalidBoardError::InvalidPosition); //TODO better error
-        }
-
-        // all fields between the from and to positions must be filled
-        if self.from.pos.0 == self.to.pos.0 {
-            let pos_diff = self.to.pos.1.checked_signed_diff(self.from.pos.1).unwrap();
-
-            let mut range = if pos_diff.signum() > 0 {
-                1..pos_diff
-            } else {
-                (pos_diff + 1)..0
-            };
-
-            if !range.all(|pos| {
-                self.board.is_position_filled((
-                    self.from.pos.0,
-                    (self.from.pos.1 as isize + pos) as usize,
-                ))
-            }) {
-                return Err(InvalidBoardError::InvalidPosition); //TODO better error
-            }
-        } else if self.from.pos.1 == self.to.pos.1 {
-            let pos_diff = self.to.pos.0.checked_signed_diff(self.from.pos.0).unwrap();
-
-            let mut range = if pos_diff.signum() > 0 {
-                1..pos_diff
-            } else {
-                (pos_diff + 1)..0
-            };
-
-            if !range.all(|pos| {
-                self.board.is_position_filled((
-                    (self.from.pos.0 as isize + pos) as usize,
-                    self.from.pos.1,
-                ))
-            }) {
-                return Err(InvalidBoardError::InvalidPosition); //TODO better error
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<'a> Move<'a, Fox> {
-    pub fn new(board: &'a Board, from: &'a Fox, to: Fox) -> Self {
-        Move { board, from, to }
-    }
-
-    pub fn is_valid(&self) -> Result<(), InvalidBoardError> {
-        if self.to.pos1.0 + self.to.pos1.1 > self.to.pos2.0 + self.to.pos2.1 {
-            return Err(InvalidBoardError::FoxNotNormalized);
-        }
-        if self.to == *self.from {
-            return Err(InvalidBoardError::InvalidPosition);
-        }
-        if self.to.pos1.0 >= 5 || self.to.pos1.1 >= 5 || self.to.pos2.0 >= 5 || self.to.pos2.1 >= 5
-        {
-            return Err(InvalidBoardError::OutOfBounds);
-        }
-        if self.to.pos1.0.abs_diff(self.to.pos2.0) != 1
-            && self.to.pos1.1.abs_diff(self.to.pos2.1) == 0
-            || self.to.pos1.1.abs_diff(self.to.pos2.1) != 1
-                && self.to.pos1.0.abs_diff(self.to.pos2.0) == 0
-        {
-            return Err(InvalidBoardError::FoxNotConnected);
-        }
-        if self.to.pos1.0 % 2 == 0 && self.to.pos1.1 % 2 == 0
-            || self.to.pos2.0 % 2 == 0 && self.to.pos2.1 % 2 == 0
-        {
-            return Err(InvalidBoardError::FoxNotOnOddLane);
-        }
-
-        // check that all fields between the from and to positions are empty (note that fox can intersect with itself)
-        if self.from.pos1.0 == self.to.pos1.0
-            && self.from.pos1.0 == self.to.pos2.0
-            && self.from.pos1.0 == self.from.pos2.0
-        {
-            let pos_diff = self
-                .to
-                .pos1
-                .1
-                .checked_signed_diff(self.from.pos1.1)
-                .unwrap();
-
-            let mut range = if pos_diff.signum() > 0 {
-                1..pos_diff
-            } else {
-                pos_diff..0
-            };
-
-            if !range.all(|pos| {
-                self.board
-                    .get_filled_positions()
-                    .intersection(&HashSet::from([
-                        (self.from.pos1.0, (self.from.pos1.1 as isize + pos) as usize),
-                        (self.from.pos2.0, (self.from.pos2.1 as isize + pos) as usize),
-                    ]))
-                    .collect::<HashSet<&(usize, usize)>>()
-                    .difference(&HashSet::from([&self.from.pos1, &self.from.pos2]))
-                    .collect::<HashSet<&&(usize, usize)>>()
-                    .is_empty()
-            }) {
-                return Err(InvalidBoardError::InvalidPosition); //TODO better error
-            }
-        } else if self.from.pos1.1 == self.to.pos1.1
-            && self.from.pos1.1 == self.to.pos2.1
-            && self.from.pos1.1 == self.from.pos2.1
-        {
-            let pos_diff = self
-                .to
-                .pos1
-                .0
-                .checked_signed_diff(self.from.pos1.0)
-                .unwrap();
-
-            let mut range = if pos_diff.signum() > 0 {
-                1..pos_diff
-            } else {
-                pos_diff..0
-            };
-
-            if !range.all(|pos| {
-                self.board
-                    .get_filled_positions()
-                    .intersection(&HashSet::from([
-                        ((self.from.pos1.0 as isize + pos) as usize, self.from.pos1.1),
-                        ((self.from.pos2.0 as isize + pos) as usize, self.from.pos2.1),
-                    ]))
-                    .collect::<HashSet<&(usize, usize)>>()
-                    .difference(&HashSet::from([&self.from.pos1, &self.from.pos2]))
-                    .collect::<HashSet<&&(usize, usize)>>()
-                    .is_empty()
-            }) {
-                return Err(InvalidBoardError::InvalidPosition); //TODO better error
-            }
-        } else {
-            // check that fox moves in a straight line
-            return Err(InvalidBoardError::InvalidPosition);
-        }
-        Ok(())
-    }
-}
-
 impl Board {
     pub fn new() -> Self {
         Board {
@@ -243,20 +91,95 @@ impl Board {
         }
     }
 
-    pub fn move_bunny(&self, mv: Move<Bunny>) -> Result<Self, InvalidBoardError> {
-        mv.is_valid()?;
-        let mut new_board = self.clone();
-        new_board.bunnies.remove(&mv.from);
-        new_board.add_bunny(mv.to)?;
-        Ok(new_board)
+    pub fn get_possible_bunny_moves(&self, bunny: &Bunny) -> Vec<Bunny> {
+        let mut moves = Vec::new();
+
+        for direction in [
+            (1 as isize, 0),
+            (0, 1 as isize),
+            (-1 as isize, 0),
+            (0, -1 as isize),
+        ] {
+            let mut pos = (
+                bunny.pos.0 as isize + direction.0,
+                bunny.pos.1 as isize + direction.1,
+            );
+            if pos.1 < 0 || pos.1 >= 5 || pos.0 < 0 || pos.0 >= 5 {
+                continue;
+            }
+            if !self.is_position_filled((pos.0 as usize, pos.1 as usize)) {
+                continue;
+            }
+
+            pos = (pos.0 as isize + direction.0, pos.1 as isize + direction.1);
+            loop {
+                if pos.1 < 0 || pos.1 >= 5 || pos.0 < 0 || pos.0 >= 5 {
+                    break;
+                }
+                if self.is_position_filled((pos.0 as usize, pos.1 as usize)) {
+                    pos = (pos.0 as isize + direction.0, pos.1 as isize + direction.1);
+                } else {
+                    moves.push(Bunny {
+                        pos: (pos.0 as usize, pos.1 as usize),
+                    });
+                    break;
+                }
+            }
+        }
+        moves
     }
 
-    pub fn move_fox(&self, mv: Move<Fox>) -> Result<Self, InvalidBoardError> {
-        mv.is_valid()?;
-        let mut new_board = self.clone();
-        new_board.foxes.remove(&mv.from);
-        new_board.add_fox(mv.to)?;
-        Ok(new_board)
+    // Assumes normalized fox!
+    pub fn get_possible_fox_moves(&self, fox: &Fox) -> Vec<Fox> {
+        let mut moves = Vec::new();
+
+        let directions = match fox.orientation() {
+            FoxOrientation::Horizontal => vec![(1, 0), (-1, 0)],
+            FoxOrientation::Vertical => vec![(0, 1), (0, -1)],
+        };
+
+        for direction in directions.iter() {
+            let mut pos = if direction.0 + direction.1 == 1 {
+                (fox.pos2.0 as isize, fox.pos2.1 as isize)
+            } else {
+                (fox.pos1.0 as isize, fox.pos1.1 as isize)
+            };
+
+            pos = (pos.0 + direction.0, pos.1 + direction.1);
+            loop {
+                if pos.1 < 0 || pos.1 >= 5 || pos.0 < 0 || pos.0 >= 5 {
+                    break;
+                }
+                if self.is_position_filled((pos.0 as usize, pos.1 as usize)) {
+                    break;
+                } else {
+                    moves.push(
+                        Fox {
+                            pos1: (pos.0 as usize, pos.1 as usize),
+                            pos2: (
+                                (pos.0 - direction.0) as usize,
+                                (pos.1 - direction.1) as usize,
+                            ),
+                        }
+                        .normalize(),
+                    );
+                }
+                pos = (pos.0 + direction.0, pos.1 + direction.1);
+            }
+        }
+        moves
+    }
+
+    pub fn move_bunny(mut self, from: &Bunny, to: Bunny) -> Result<Self, InvalidBoardError> {
+        self.bunnies.remove(from);
+        self.add_bunny(to)?;
+        Ok(self)
+    }
+
+    pub fn move_fox(mut self, from: &Fox, to: Fox) -> Result<Self, InvalidBoardError> {
+        self.foxes.remove(from);
+        self.add_fox(to)?;
+        Ok(self)
     }
 
     pub fn is_empty(&self) -> bool {

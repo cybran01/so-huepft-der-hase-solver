@@ -33,59 +33,71 @@ fn main() {
 
     println!("{}", board);
 
-    // Move a bunny from (2, 3) to (2, 1)
-    let mv = Move::<Bunny>::new(
-        &board,
-        board.bunnies.iter().find(|b| b.pos == (2, 3)).unwrap(),
-        Bunny { pos: (2, 1) },
-    );
-    let new_board = board.move_bunny(mv).unwrap();
+    // Get possible moves for the bunny at position (2, 3)
+    let bunny_moves = board.get_possible_bunny_moves(&Bunny { pos: (2, 3) });
+    for bunny_move in bunny_moves {
+        let test_board = board.clone();
+        println!(
+            "Bunny can move to:\n{}",
+            test_board
+                .move_bunny(&Bunny { pos: (2, 3) }, bunny_move)
+                .unwrap()
+        );
+    }
 
-    println!("{}", new_board);
+    let board = board
+        .move_bunny(&Bunny { pos: (2, 3) }, Bunny { pos: (2, 1) })
+        .unwrap();
 
-    // Move fox 1 from (3, 3) and (4, 3) to (2, 3) and (3, 3)
-    let mv = Move::<Fox>::new(
-        &new_board,
-        new_board
-            .foxes
-            .iter()
-            .find(|f| f.pos1 == (3, 3) && f.pos2 == (4, 3))
-            .unwrap(),
-        Fox {
-            pos1: (3, 3),
-            pos2: (2, 3),
+    println!("New Board:\n{}", board);
+
+    // Get possible moves for the fox at position (4, 3) and (3, 3)
+    let fox_moves = board.get_possible_fox_moves(
+        &Fox {
+            pos1: (4, 3),
+            pos2: (3, 3),
         }
         .normalize(),
     );
-    let new_board = new_board.move_fox(mv).unwrap();
+    for fox_move in fox_moves {
+        let test_board = board.clone();
+        println!(
+            "Fox1 can move to:\n{}",
+            test_board
+                .move_fox(
+                    &Fox {
+                        pos1: (4, 3),
+                        pos2: (3, 3)
+                    }
+                    .normalize(),
+                    fox_move
+                )
+                .unwrap()
+        );
+    }
 
-    println!("{}", new_board);
-
-    // Move bunny from (2, 1) to (2, 4)
-    let mv = Move::<Bunny>::new(
-        &new_board,
-        new_board.bunnies.iter().find(|b| b.pos == (2, 1)).unwrap(),
-        Bunny { pos: (2, 4) },
-    );
-    let new_board = new_board.move_bunny(mv).unwrap();
-
-    println!("{}", new_board);
-
-    // Move fox 2 from (3, 1) and (4, 1) to (0, 1) and (1, 1)
-    let mv = Move::<Fox>::new(
-        &new_board,
-        new_board
-            .foxes
-            .iter()
-            .find(|f| f.pos1 == (3, 1) && f.pos2 == (4, 1))
-            .unwrap(),
-        Fox {
-            pos1: (0, 1),
-            pos2: (1, 1),
+    // Get possible moves for the fox at position (4, 1) and (3, 1)
+        let fox_moves = board.get_possible_fox_moves(
+        &Fox {
+            pos1: (4, 1),
+            pos2: (3, 1),
         }
         .normalize(),
     );
-    let new_board = new_board.move_fox(mv).unwrap();
-
-    println!("{}", new_board);
+    for fox_move in fox_moves {
+        let test_board = board.clone();
+        println!(
+            "Fox2 can move to:\n{}",
+            test_board
+                .move_fox(
+                    &Fox {
+                        pos1: (4, 1),
+                        pos2: (3, 1)
+                    }
+                    .normalize(),
+                    fox_move
+                )
+                .unwrap()
+        );
+    }
 }
