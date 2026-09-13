@@ -1,11 +1,11 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash};
 
-#[derive(Eq, Debug, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone, PartialOrd, Ord)]
 pub struct Bunny {
     pub pos: (usize, usize),
 }
 
-#[derive(Eq, Debug, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone, PartialOrd, Ord)]
 pub struct Fox {
     pub pos1: (usize, usize),
     pub pos2: (usize, usize),
@@ -33,16 +33,40 @@ impl Fox {
     }
 }
 
-#[derive(Eq, Debug, Hash, PartialEq, Clone)]
+#[derive(Eq, Debug, Hash, PartialEq, Clone, PartialOrd, Ord)]
 pub struct Mushroom {
     pub pos: (usize, usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, Hash)]
 pub struct Board {
-    pub bunnies: HashSet<Bunny>,
-    pub foxes: HashSet<Fox>,
-    pub mushrooms: HashSet<Mushroom>,
+    pub bunnies: Vec<Bunny>,
+    pub foxes: Vec<Fox>,
+    pub mushrooms: Vec<Mushroom>,
+}
+
+impl PartialEq for Board {
+    fn ne(&self, other: &Self) -> bool {
+        !self.eq(other)
+    }
+
+    fn eq(&self, other: &Self) -> bool {
+        let mut self_bun = self.bunnies.clone();
+        self_bun.sort();
+        let mut self_fox = self.foxes.clone();
+        self_fox.sort();
+        let mut self_mushroom = self.mushrooms.clone();
+        self_mushroom.sort();
+
+        let mut other_bun = other.bunnies.clone();
+        other_bun.sort();
+        let mut other_fox = other.foxes.clone();
+        other_fox.sort();
+        let mut other_mushroom = other.mushrooms.clone();
+        other_mushroom.sort();
+
+        self_bun == other_bun && self_fox == other_fox && self_mushroom == other_mushroom
+    }
 }
 
 #[derive(Debug)]
@@ -85,10 +109,27 @@ impl Display for Board {
 impl Board {
     pub fn new() -> Self {
         Board {
-            bunnies: HashSet::new(),
-            foxes: HashSet::new(),
-            mushrooms: HashSet::new(),
+            bunnies: Vec::new(),
+            foxes: Vec::new(),
+            mushrooms: Vec::new(),
         }
+    }
+
+    pub fn get_all_possible_moves(&self) -> Vec<Board> {
+        let mut res = Vec::new();
+
+        for bun in &self.bunnies {
+            for bun_move in self.get_possible_bunny_moves(bun) {
+                res.push(self.clone().move_bunny(&bun, bun_move).unwrap())
+            }
+        }
+        for fox in &self.foxes {
+            for fox_move in self.get_possible_fox_moves(fox) {
+                res.push(self.clone().move_fox(&fox, fox_move).unwrap())
+            }
+        }
+
+        res
     }
 
     pub fn get_possible_bunny_moves(&self, bunny: &Bunny) -> Vec<Bunny> {
@@ -171,13 +212,13 @@ impl Board {
     }
 
     pub fn move_bunny(mut self, from: &Bunny, to: Bunny) -> Result<Self, InvalidBoardError> {
-        self.bunnies.remove(from);
+        self.bunnies.retain(|e| e != from);
         self.add_bunny(to)?;
         Ok(self)
     }
 
     pub fn move_fox(mut self, from: &Fox, to: Fox) -> Result<Self, InvalidBoardError> {
-        self.foxes.remove(from);
+        self.foxes.retain(|e| e != from);
         self.add_fox(to)?;
         Ok(self)
     }
@@ -207,19 +248,19 @@ impl Board {
 
     pub fn add_bunny(&mut self, bunny: Bunny) -> Result<(), InvalidBoardError> {
         self.is_bunny_placement_position_valid(bunny.pos)?;
-        self.bunnies.insert(bunny);
+        self.bunnies.push(bunny);
         Ok(())
     }
 
     pub fn add_fox(&mut self, fox: Fox) -> Result<(), InvalidBoardError> {
         self.is_fox_placement_position_valid(fox.pos1, fox.pos2)?;
-        self.foxes.insert(fox);
+        self.foxes.push(fox);
         Ok(())
     }
 
     pub fn add_mushroom(&mut self, mushroom: Mushroom) -> Result<(), InvalidBoardError> {
         self.is_mushroom_placement_position_valid(mushroom.pos)?;
-        self.mushrooms.insert(mushroom);
+        self.mushrooms.push(mushroom);
         Ok(())
     }
 
@@ -289,5 +330,66 @@ impl Board {
             return Err(InvalidBoardError::TooManyMushrooms);
         }
         Ok(())
+    }
+
+    pub fn is_in_win_state(&self) -> bool {
+        self.bunnies
+            .iter()
+            .all(|bun| [(0, 0), (0, 4), (2, 2), (0, 4), (4, 4)].contains(&bun.pos))
+    }
+
+    fn transform_board(&self, trafo: impl Fn((usize, usize)) -> (usize, usize)) -> Board {
+        let bunnies = self
+            .bunnies
+            .iter()
+            .map(|bun| Bunny {
+                pos: trafo(bun.pos),
+            })
+            .collect();
+        let mushrooms = self
+            .mushrooms
+            .iter()
+            .map(|mushroom| Mushroom {
+                pos: trafo(mushroom.pos),
+            })
+            .collect();
+        let foxes = self
+            .foxes
+            .iter()
+            .map(|fox| {
+                Fox {
+                    pos1: trafo(fox.pos1),
+                    pos2: trafo(fox.pos2),
+                }
+                .normalize()
+            })
+            .collect();
+        Board {
+            bunnies,
+            foxes,
+            mushrooms,
+        }
+    }
+
+    pub fn rotate90(&self) -> Self {
+        let trafo = |pos: (usize, usize)| (pos.1, 4 - pos.0 as usize);
+        self.transform_board(trafo)
+    }
+
+    pub fn rotate180(&self) -> Self {
+        self.rotate90().rotate90()
+    }
+
+    pub fn rotate270(&self) -> Self {
+        self.rotate180().rotate90()
+    }
+
+    pub fn flip_x(&self) -> Self {
+        let trafo = |pos: (usize, usize)| (4 - pos.0 as usize, pos.1);
+        self.transform_board(trafo)
+    }
+
+    pub fn flip_y(&self) -> Self {
+        self.flip_x().rotate180()
     }
 }
