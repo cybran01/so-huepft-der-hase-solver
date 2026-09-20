@@ -1,128 +1,163 @@
-use std::{collections::HashMap, hash::Hash};
+use std::collections::{HashMap, VecDeque};
 
-use crate::{
-    board::*,
-    graph::GraphNode::{Duplicate, FlipX, FlipY, Rotate90, Rotate180, Rotate270, Unique},
-};
+use crate::board::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum GraphNode {
-    Unique(Board),
-    Duplicate(Board),
-    FlipX(Board),
-    FlipY(Board),
-    Rotate90(Board),
-    Rotate180(Board),
-    Rotate270(Board),
-}
+type NodeId = usize;
 
-impl GraphNode {
-    pub fn get_board(&self) -> &Board {
-        match self {
-            Unique(board) => board,
-            Duplicate(board) => board,
-            FlipX(board) => board,
-            FlipY(board) => board,
-            Rotate90(board) => board,
-            Rotate180(board) => board,
-            Rotate270(board) => board,
-        }
-    }
+#[derive(Debug)]
+struct SearchNode {
+    board: Board,
+    state: StateKey,
+    parent: Option<NodeId>,
+    move_taken: Option<Move>,
 }
 
 #[derive(Debug)]
 pub struct Graph {
     pub root: Board,
-    // key: child, value: parent
-    pub edgemap: HashMap<GraphNode, Board>,
+    nodes: Vec<SearchNode>,
+    visited: HashMap<StateKey, NodeId>,
 }
 
 impl Graph {
-    pub fn generate_solution_graph_from_board(board: &Board) -> (Self, Option<Board>) {
-        let mut edgemap = HashMap::new();
+    pub fn path_to(&self, end: &Board) -> Vec<Board> {
+        let mut path = Vec::new();
+        let mut node_id = self.visited[&canonical_key(end)];
 
-        if board.is_in_win_state() {
+        loop {
+            let node = &self.nodes[node_id];
+            path.push(node.board.clone());
+            match node.parent {
+                Some(parent) => node_id = parent,
+                None => break,
+            }
+        }
+
+        path.reverse();
+        debug_assert_eq!(path.first(), Some(&self.root));
+        path
+    }
+
+    pub fn moves_to(&self, end: &Board) -> Vec<Move> {
+        let mut moves = Vec::new();
+        let mut node_id = self.visited[&canonical_key(end)];
+
+        while let Some(parent) = self.nodes[node_id].parent {
+            moves.push(self.nodes[node_id].move_taken.clone().unwrap());
+            node_id = parent;
+        }
+
+        moves.reverse();
+        moves
+    }
+
+    pub fn generate_solution_graph_from_board(board: &Board) -> (Self, Option<Board>) {
+        let root = board.clone();
+        let root_key = canonical_key(&root);
+        let mut nodes = vec![SearchNode {
+            board: root.clone(),
+            state: root.state_key(),
+            parent: None,
+            move_taken: None,
+        }];
+        let mut visited = HashMap::from([(root_key, 0)]);
+        let mut queue = VecDeque::from([0]);
+
+        if root.is_in_win_state() {
             return (
                 Graph {
-                    root: board.clone(),
-                    edgemap,
+                    root,
+                    nodes,
+                    visited,
                 },
                 Some(board.clone()),
             );
         }
 
-        let mut cur_layer_moves = vec![Unique(board.clone())];
-        let mut winning_board = None;
-        while winning_board.is_none()
-            && cur_layer_moves.iter().any(|n| {
-                if let Unique(_) = n {
-                    return true;
-                }
-                return false;
-            })
-        {
-            let mut next_layer_moves = HashMap::new();
-            for board_move in cur_layer_moves.iter().filter_map(|n| {
-                if let Unique(n) = n {
-                    return Some(n);
-                }
-                return None;
-            }) {
-                let possible_moves = board_move.get_all_possible_moves();
+        while let Some(parent_id) = queue.pop_front() {
+            let parent = nodes[parent_id].board.clone();
+            let parent_state = nodes[parent_id].state.clone();
 
-                let item_next_layer_moves = possible_moves
-                    .iter()
-                    .map(|b| Self::check_duplicates(&edgemap, board, b));
-                for item in item_next_layer_moves {
-                    next_layer_moves.insert(item, board_move.clone());
-                    if board_move.is_in_win_state() {
-                        winning_board = Some(board_move.clone());
-                    }
+            for movement in parent.get_all_moves() {
+                let successor_state = parent_state.apply_move(&movement);
+                let key = successor_state.canonical();
+                if visited.contains_key(&key) {
+                    continue;
                 }
+
+                let successor = parent.apply_move(&movement).unwrap();
+                let node_id = nodes.len();
+                visited.insert(key, node_id);
+                nodes.push(SearchNode {
+                    board: successor.clone(),
+                    state: successor_state,
+                    parent: Some(parent_id),
+                    move_taken: Some(movement),
+                });
+
+                if successor.is_in_win_state() {
+                    return (
+                        Graph {
+                            root,
+                            nodes,
+                            visited,
+                        },
+                        Some(successor),
+                    );
+                }
+
+                queue.push_back(node_id);
             }
-            edgemap.extend(next_layer_moves.clone());
-            cur_layer_moves = next_layer_moves.keys().cloned().collect();
         }
 
-        return (
+        (
             Graph {
-                root: board.clone(),
-                edgemap,
+                root,
+                nodes,
+                visited,
             },
-            winning_board,
-        );
+            None,
+        )
     }
+}
 
-    fn check_duplicates(
-        edgemap: &HashMap<GraphNode, Board>,
-        root: &Board,
-        board: &Board,
-    ) -> GraphNode {
-        if root == board {
-            return Duplicate(board.clone());
+fn canonical_key(board: &Board) -> StateKey {
+    board.state_key().canonical()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constellation_60_keeps_shortest_solution_depth() {
+        let mut board = Board::new();
+        board.add_bunny(Bunny { pos: (3, 0) }).unwrap();
+        board.add_bunny(Bunny { pos: (4, 2) }).unwrap();
+        board.add_bunny(Bunny { pos: (3, 3) }).unwrap();
+        board.add_mushroom(Mushroom { pos: (0, 1) }).unwrap();
+        board.add_mushroom(Mushroom { pos: (2, 2) }).unwrap();
+        board.add_mushroom(Mushroom { pos: (3, 4) }).unwrap();
+        board
+            .add_fox(
+                Fox {
+                    pos1: (0, 3),
+                    pos2: (1, 3),
+                }
+                .normalize(),
+            )
+            .unwrap();
+
+        let (graph, winning_board) = Graph::generate_solution_graph_from_board(&board);
+        let winning_board = winning_board.unwrap();
+        let path = graph.path_to(&winning_board);
+        let moves = graph.moves_to(&winning_board);
+
+        assert_eq!(moves.len(), 82);
+        assert_eq!(path.len(), moves.len() + 1);
+        assert!(path.last().unwrap().is_in_win_state());
+        for states in path.windows(2) {
+            assert!(states[0].can_move_to(&states[1]));
         }
-        for cur_node in edgemap.keys() {
-            if let Unique(cur_board) = cur_node {
-                if board.flip_x() == *cur_board {
-                    return FlipX(board.clone());
-                }
-                if board.rotate90() == *cur_board {
-                    return Rotate90(board.clone());
-                }
-                if board.rotate180() == *cur_board {
-                    return Rotate180(board.clone());
-                }
-                if board.rotate270() == *cur_board {
-                    return Rotate270(board.clone());
-                }
-                if board.flip_y() == *cur_board {
-                    return FlipY(board.clone());
-                }
-                if board == cur_board {
-                    return Duplicate(board.clone());
-                }
-            }
-        }
-        GraphNode::Unique(board.clone())
     }
 }
