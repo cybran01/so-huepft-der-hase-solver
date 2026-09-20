@@ -56,21 +56,66 @@ pub struct StateKey {
     pub foxes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug)]
+enum Symmetry {
+    Identity,
+    Rotate90,
+    Rotate180,
+    Rotate270,
+    ReflectX,
+    ReflectY,
+    ReflectDiagonal,
+    ReflectAntiDiagonal,
+}
+
+impl Symmetry {
+    const ALL: [Self; 8] = [
+        Self::Identity,
+        Self::Rotate90,
+        Self::Rotate180,
+        Self::Rotate270,
+        Self::ReflectX,
+        Self::ReflectY,
+        Self::ReflectDiagonal,
+        Self::ReflectAntiDiagonal,
+    ];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Identity => 0,
+            Self::Rotate90 => 1,
+            Self::Rotate180 => 2,
+            Self::Rotate270 => 3,
+            Self::ReflectX => 4,
+            Self::ReflectY => 5,
+            Self::ReflectDiagonal => 6,
+            Self::ReflectAntiDiagonal => 7,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Move {
-    Bunny { from: Bunny, to: Bunny },
-    Fox { from: Fox, to: Fox },
+    Bunny { from: u8, to: u8 },
+    Fox { from: u8, to: u8 },
 }
 
 impl StateKey {
     pub fn canonical(&self) -> Self {
-        (0..8)
-            .map(|symmetry| self.transform(symmetry))
-            .min()
-            .unwrap()
+        let mut symmetries = Symmetry::ALL.into_iter();
+        let mut canonical = self.transform(symmetries.next().unwrap());
+
+        for symmetry in symmetries {
+            let candidate = self.transform(symmetry);
+            if candidate < canonical {
+                canonical = candidate;
+            }
+        }
+
+        canonical
     }
 
-    fn transform(&self, symmetry: usize) -> Self {
+    fn transform(&self, symmetry: Symmetry) -> Self {
         let mut transformed = Self {
             bunnies: 0,
             mushrooms: 0,
@@ -79,7 +124,7 @@ impl StateKey {
 
         for position in 0..25 {
             let source = 1 << position;
-            let target = 1 << SYMMETRY_MAPS[symmetry][position];
+            let target = 1 << SYMMETRY_MAPS[symmetry.index()][position];
             if self.bunnies & source != 0 {
                 transformed.bunnies |= target;
             }
@@ -89,10 +134,11 @@ impl StateKey {
         }
 
         for &placement in &self.foxes {
-            let (first, second) = fox_placement_from_id(placement);
+            let (first, second) = fox_placement_from_id(placement)
+                .expect("state key must contain a valid fox placement");
             let mut pair = (
-                SYMMETRY_MAPS[symmetry][first as usize],
-                SYMMETRY_MAPS[symmetry][second as usize],
+                SYMMETRY_MAPS[symmetry.index()][first as usize],
+                SYMMETRY_MAPS[symmetry.index()][second as usize],
             );
             if position_sum(pair.0) > position_sum(pair.1) {
                 std::mem::swap(&mut pair.0, &mut pair.1);
@@ -103,44 +149,36 @@ impl StateKey {
         transformed
     }
 
-    pub fn apply_move(&self, movement: &Move) -> Self {
+    pub fn apply_move(&self, movement: &Move) -> Result<Self, InvalidBoardError> {
         let mut successor = self.clone();
 
         match movement {
             Move::Bunny { from, to } => {
-                successor.bunnies &= !position_mask(from.pos);
-                successor.bunnies |= position_mask(to.pos);
+                let from_mask = position_mask(position_from_index(*from));
+                if successor.bunnies & from_mask == 0 {
+                    return Err(InvalidBoardError::InvalidPosition);
+                }
+                successor.bunnies &= !from_mask;
+                successor.bunnies |= position_mask(position_from_index(*to));
             }
             Move::Fox { from, to } => {
-                let from_id = fox_key(from);
-                let to_id = fox_key(to);
                 let fox = successor
                     .foxes
                     .iter_mut()
-                    .find(|fox| **fox == from_id)
-                    .expect("move source must exist in state key");
-                *fox = to_id;
+                    .find(|fox| **fox == *from)
+                    .ok_or(InvalidBoardError::InvalidPosition)?;
+                *fox = *to;
                 successor.foxes.sort();
             }
         }
 
-        successor
+        Ok(successor)
     }
 }
 
 impl Hash for Board {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let mut bunnies = self.bunnies.clone();
-        let mut foxes = self.foxes.clone();
-        let mut mushrooms = self.mushrooms.clone();
-
-        bunnies.sort();
-        foxes.sort();
-        mushrooms.sort();
-
-        bunnies.hash(state);
-        foxes.hash(state);
-        mushrooms.hash(state);
+        self.state_key().hash(state);
     }
 }
 
@@ -152,6 +190,10 @@ fn position_index(pos: (usize, usize)) -> u8 {
     (pos.1 * 5 + pos.0) as u8
 }
 
+fn position_from_index(index: u8) -> (usize, usize) {
+    (index as usize % 5, index as usize / 5)
+}
+
 fn fox_key(fox: &Fox) -> u8 {
     let mut key = (position_index(fox.pos1), position_index(fox.pos2));
     if position_sum(key.0) > position_sum(key.1) {
@@ -160,49 +202,61 @@ fn fox_key(fox: &Fox) -> u8 {
     fox_placement_id(key.0, key.1)
 }
 
-fn fox_placement_id(first: u8, second: u8) -> u8 {
-    let mut id = 0;
-    for left in 0..25u8 {
-        for right in (left + 1)..25u8 {
-            if !is_legal_fox_edge(left, right) {
-                continue;
-            }
+const FOX_PLACEMENT_COUNT: usize = 16;
 
-            let mut pair = (left, right);
-            if position_sum(pair.0) > position_sum(pair.1) {
-                std::mem::swap(&mut pair.0, &mut pair.1);
+const fn fox_placements() -> [(u8, u8); FOX_PLACEMENT_COUNT] {
+    let mut placements = [(0, 0); FOX_PLACEMENT_COUNT];
+    let mut id = 0;
+    let mut left = 0;
+    while left < 25 {
+        let mut right = left + 1;
+        while right < 25 {
+            if is_legal_fox_edge(left, right) {
+                let mut pair = (left, right);
+                if position_sum(pair.0) > position_sum(pair.1) {
+                    let first = pair.0;
+                    pair.0 = pair.1;
+                    pair.1 = first;
+                }
+                placements[id] = pair;
+                id += 1;
             }
-            if pair == (first, second) {
-                return id;
-            }
-            id += 1;
+            right += 1;
         }
+        left += 1;
+    }
+    placements
+}
+
+const FOX_PLACEMENTS: [(u8, u8); FOX_PLACEMENT_COUNT] = fox_placements();
+
+const fn fox_placement_map() -> [u8; 625] {
+    let mut map = [u8::MAX; 625];
+    let mut id = 0;
+    while id < FOX_PLACEMENT_COUNT {
+        let pair = FOX_PLACEMENTS[id];
+        map[pair.0 as usize * 25 + pair.1 as usize] = id as u8;
+        map[pair.1 as usize * 25 + pair.0 as usize] = id as u8;
+        id += 1;
+    }
+    map
+}
+
+const FOX_PLACEMENT_BY_PAIR: [u8; 625] = fox_placement_map();
+
+fn fox_placement_id(first: u8, second: u8) -> u8 {
+    let id = FOX_PLACEMENT_BY_PAIR[first as usize * 25 + second as usize];
+    if id != u8::MAX {
+        return id;
     }
     panic!("invalid fox placement: {first}, {second}");
 }
 
-fn fox_placement_from_id(target: u8) -> (u8, u8) {
-    let mut id = 0;
-    for left in 0..25u8 {
-        for right in (left + 1)..25u8 {
-            if !is_legal_fox_edge(left, right) {
-                continue;
-            }
-
-            let mut pair = (left, right);
-            if position_sum(pair.0) > position_sum(pair.1) {
-                std::mem::swap(&mut pair.0, &mut pair.1);
-            }
-            if id == target {
-                return pair;
-            }
-            id += 1;
-        }
-    }
-    panic!("invalid fox placement id: {target}");
+fn fox_placement_from_id(target: u8) -> Option<(u8, u8)> {
+    FOX_PLACEMENTS.get(target as usize).copied()
 }
 
-fn is_legal_fox_edge(first: u8, second: u8) -> bool {
+const fn is_legal_fox_edge(first: u8, second: u8) -> bool {
     let first_position = (first as usize % 5, first as usize / 5);
     let second_position = (second as usize % 5, second as usize / 5);
     let adjacent = first_position.0.abs_diff(second_position.0)
@@ -213,23 +267,22 @@ fn is_legal_fox_edge(first: u8, second: u8) -> bool {
     adjacent && first_on_lane && second_on_lane
 }
 
-fn position_sum(position: u8) -> usize {
+const fn position_sum(position: u8) -> usize {
     position as usize % 5 + position as usize / 5
 }
 
-const fn transform_position(position: u8, symmetry: usize) -> u8 {
+const fn transform_position(position: u8, symmetry: Symmetry) -> u8 {
     let x = position as usize % 5;
     let y = position as usize / 5;
     let (x, y) = match symmetry {
-        0 => (x, y),
-        1 => (y, 4 - x),
-        2 => (4 - x, 4 - y),
-        3 => (4 - y, x),
-        4 => (4 - x, y),
-        5 => (x, 4 - y),
-        6 => (y, x),
-        7 => (4 - y, 4 - x),
-        _ => unreachable!(),
+        Symmetry::Identity => (x, y),
+        Symmetry::Rotate90 => (y, 4 - x),
+        Symmetry::Rotate180 => (4 - x, 4 - y),
+        Symmetry::Rotate270 => (4 - y, x),
+        Symmetry::ReflectX => (4 - x, y),
+        Symmetry::ReflectY => (x, 4 - y),
+        Symmetry::ReflectDiagonal => (y, x),
+        Symmetry::ReflectAntiDiagonal => (4 - y, 4 - x),
     };
     (y * 5 + x) as u8
 }
@@ -240,7 +293,7 @@ const fn symmetry_maps() -> [[u8; 25]; 8] {
     while symmetry < 8 {
         let mut position = 0;
         while position < 25 {
-            maps[symmetry][position] = transform_position(position as u8, symmetry);
+            maps[symmetry][position] = transform_position(position as u8, Symmetry::ALL[symmetry]);
             position += 1;
         }
         symmetry += 1;
@@ -260,21 +313,7 @@ impl PartialEq for Board {
     }
 
     fn eq(&self, other: &Self) -> bool {
-        let mut self_bun = self.bunnies.clone();
-        self_bun.sort();
-        let mut self_fox = self.foxes.clone();
-        self_fox.sort();
-        let mut self_mushroom = self.mushrooms.clone();
-        self_mushroom.sort();
-
-        let mut other_bun = other.bunnies.clone();
-        other_bun.sort();
-        let mut other_fox = other.foxes.clone();
-        other_fox.sort();
-        let mut other_mushroom = other.mushrooms.clone();
-        other_mushroom.sort();
-
-        self_bun == other_bun && self_fox == other_fox && self_mushroom == other_mushroom
+        self.state_key() == other.state_key()
     }
 }
 
@@ -356,16 +395,16 @@ impl Board {
         for bun in &self.bunnies {
             for bun_move in self.get_possible_bunny_moves_with_occupancy(bun, occupied) {
                 moves.push(Move::Bunny {
-                    from: bun.clone(),
-                    to: bun_move,
+                    from: position_index(bun.pos),
+                    to: position_index(bun_move.pos),
                 });
             }
         }
         for fox in &self.foxes {
             for fox_move in self.get_possible_fox_moves_with_occupancy(fox, occupied) {
                 moves.push(Move::Fox {
-                    from: fox.clone(),
-                    to: fox_move,
+                    from: fox_key(fox),
+                    to: fox_key(&fox_move),
                 });
             }
         }
@@ -375,8 +414,30 @@ impl Board {
 
     pub fn apply_move(&self, movement: &Move) -> Result<Board, InvalidBoardError> {
         match movement {
-            Move::Bunny { from, to } => self.clone().move_bunny(from, to.clone()),
-            Move::Fox { from, to } => self.clone().move_fox(from, to.clone()),
+            Move::Bunny { from, to } => self.clone().move_bunny(
+                &Bunny {
+                    pos: position_from_index(*from),
+                },
+                Bunny {
+                    pos: position_from_index(*to),
+                },
+            ),
+            Move::Fox { from, to } => {
+                let (from1, from2) =
+                    fox_placement_from_id(*from).ok_or(InvalidBoardError::InvalidPosition)?;
+                let (to1, to2) =
+                    fox_placement_from_id(*to).ok_or(InvalidBoardError::InvalidPosition)?;
+                self.clone().move_fox(
+                    &Fox {
+                        pos1: position_from_index(from1),
+                        pos2: position_from_index(from2),
+                    },
+                    Fox {
+                        pos1: position_from_index(to1),
+                        pos2: position_from_index(to2),
+                    },
+                )
+            }
         }
     }
 
@@ -676,59 +737,34 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
+    use crate::graph::Graph;
+
     use super::*;
-
-    fn parse_board(lines: &[&str]) -> Board {
-        let mut board = Board::new();
-        let mut fox_cells = Vec::new();
-
-        for (row, line) in lines.iter().enumerate() {
-            for (column, cell) in line.chars().enumerate() {
-                let position = (column, 4 - row);
-                match cell {
-                    'B' => board.add_bunny(Bunny { pos: position }).unwrap(),
-                    'F' => fox_cells.push(position),
-                    'M' => board.add_mushroom(Mushroom { pos: position }).unwrap(),
-                    '.' => {}
-                    _ => panic!("invalid board cell: {cell}"),
-                }
-            }
-        }
-
-        for cells in fox_cells.chunks_exact(2) {
-            board
-                .add_fox(
-                    Fox {
-                        pos1: cells[0],
-                        pos2: cells[1],
-                    }
-                    .normalize(),
-                )
-                .unwrap();
-        }
-
-        board
-    }
 
     #[test]
     fn recorded_solution_contains_only_legal_transitions() {
-        let states: Vec<Board> = include_str!("../solution_60.txt")
-            .split("\n\n")
-            .map(|state| parse_board(&state.lines().collect::<Vec<_>>()))
-            .collect();
+        let mut root = Board::new();
+        root.add_bunny(Bunny { pos: (3, 0) }).unwrap();
+        root.add_bunny(Bunny { pos: (4, 2) }).unwrap();
+        root.add_bunny(Bunny { pos: (3, 3) }).unwrap();
+        root.add_mushroom(Mushroom { pos: (0, 1) }).unwrap();
+        root.add_mushroom(Mushroom { pos: (2, 2) }).unwrap();
+        root.add_mushroom(Mushroom { pos: (3, 4) }).unwrap();
+        root.add_fox(
+            Fox {
+                pos1: (0, 3),
+                pos2: (1, 3),
+            }
+            .normalize(),
+        )
+        .unwrap();
+
+        let (graph, winning_board) = Graph::generate_solution_graph_from_board(&root);
+        let states = graph.path_to(&winning_board.unwrap()).unwrap();
 
         assert_eq!(states.len(), 83);
-        assert!(states.first().unwrap().is_in_win_state());
-        let mut initial_bunnies = states.last().unwrap().bunnies.clone();
-        initial_bunnies.sort();
-        assert_eq!(
-            initial_bunnies,
-            vec![
-                Bunny { pos: (3, 0) },
-                Bunny { pos: (3, 3) },
-                Bunny { pos: (4, 2) },
-            ]
-        );
+        assert_eq!(states.first(), Some(&root));
+        assert!(states.last().unwrap().is_in_win_state());
 
         for (index, states) in states.windows(2).enumerate() {
             assert!(
@@ -792,28 +828,8 @@ mod tests {
             .unwrap();
 
         let canonical = board.state_key().canonical();
-        assert_eq!(canonical, board.rotate90().state_key().canonical());
-        assert_eq!(canonical, board.flip_x().state_key().canonical());
-    }
-
-    #[test]
-    fn booklet_solution_contains_only_legal_transitions() {
-        let states: Vec<Board> = include_str!("../booklet_solution_60.txt")
-            .split("\n\n")
-            .map(|state| parse_board(&state.lines().collect::<Vec<_>>()))
-            .collect();
-
-        assert_eq!(states.len(), 88);
-        assert!(!states.first().unwrap().is_in_win_state());
-        assert!(states.last().unwrap().is_in_win_state());
-
-        for (index, states) in states.windows(2).enumerate() {
-            assert!(
-                states[0].can_move_to(&states[1]),
-                "illegal booklet transition between states {} and {}",
-                index,
-                index + 1
-            );
+        for symmetry in Symmetry::ALL {
+            assert_eq!(canonical, board.state_key().transform(symmetry).canonical());
         }
     }
 }

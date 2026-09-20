@@ -20,9 +20,9 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn path_to(&self, end: &Board) -> Vec<Board> {
+    pub fn path_to(&self, end: &Board) -> Option<Vec<Board>> {
         let mut path = Vec::new();
-        let mut node_id = self.visited[&canonical_key(end)];
+        let mut node_id = *self.visited.get(&canonical_key(end))?;
 
         loop {
             let node = &self.nodes[node_id];
@@ -35,20 +35,20 @@ impl Graph {
 
         path.reverse();
         debug_assert_eq!(path.first(), Some(&self.root));
-        path
+        Some(path)
     }
 
-    pub fn moves_to(&self, end: &Board) -> Vec<Move> {
+    pub fn moves_to(&self, end: &Board) -> Option<Vec<Move>> {
         let mut moves = Vec::new();
-        let mut node_id = self.visited[&canonical_key(end)];
+        let mut node_id = *self.visited.get(&canonical_key(end))?;
 
         while let Some(parent) = self.nodes[node_id].parent {
-            moves.push(self.nodes[node_id].move_taken.clone().unwrap());
+            moves.push(self.nodes[node_id].move_taken.unwrap());
             node_id = parent;
         }
 
         moves.reverse();
-        moves
+        Some(moves)
     }
 
     pub fn generate_solution_graph_from_board(board: &Board) -> (Self, Option<Board>) {
@@ -79,7 +79,7 @@ impl Graph {
             let parent_state = nodes[parent_id].state.clone();
 
             for movement in parent.get_all_moves() {
-                let successor_state = parent_state.apply_move(&movement);
+                let successor_state = parent_state.apply_move(&movement).unwrap();
                 let key = successor_state.canonical();
                 if visited.contains_key(&key) {
                     continue;
@@ -150,8 +150,8 @@ mod tests {
 
         let (graph, winning_board) = Graph::generate_solution_graph_from_board(&board);
         let winning_board = winning_board.unwrap();
-        let path = graph.path_to(&winning_board);
-        let moves = graph.moves_to(&winning_board);
+        let path = graph.path_to(&winning_board).unwrap();
+        let moves = graph.moves_to(&winning_board).unwrap();
 
         assert_eq!(moves.len(), 82);
         assert_eq!(path.len(), moves.len() + 1);

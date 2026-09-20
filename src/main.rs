@@ -141,8 +141,8 @@ fn main() {
 
     let (graph, winning_board) = Graph::generate_solution_graph_from_board(&board);
     let winning_board = winning_board.as_ref().unwrap();
-    let path = graph.path_to(winning_board);
-    debug_assert_eq!(graph.moves_to(winning_board).len() + 1, path.len());
+    let path = graph.path_to(winning_board).unwrap();
+    debug_assert_eq!(graph.moves_to(winning_board).unwrap().len() + 1, path.len());
 
     for state in path {
         println!("{state}");
