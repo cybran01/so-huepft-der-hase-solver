@@ -44,9 +44,9 @@ pub struct Mushroom {
 
 #[derive(Debug, Clone, Eq)]
 pub struct Board {
-    pub bunnies: Vec<Bunny>,
-    pub foxes: Vec<Fox>,
-    pub mushrooms: Vec<Mushroom>,
+    bunnies: Vec<Bunny>,
+    foxes: Vec<Fox>,
+    mushrooms: Vec<Mushroom>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -535,13 +535,20 @@ impl Board {
     }
 
     pub fn move_bunny(mut self, from: &Bunny, to: Bunny) -> Result<Self, InvalidBoardError> {
+        if !self.bunnies.contains(from) {
+            return Err(InvalidBoardError::InvalidPosition);
+        }
         self.bunnies.retain(|e| e != from);
         self.add_bunny(to)?;
         Ok(self)
     }
 
     pub fn move_fox(mut self, from: &Fox, to: Fox) -> Result<Self, InvalidBoardError> {
-        self.foxes.retain(|e| e != from);
+        let from = from.clone().normalize();
+        if !self.foxes.contains(&from) {
+            return Err(InvalidBoardError::InvalidPosition);
+        }
+        self.foxes.retain(|e| e != &from);
         self.add_fox(to)?;
         Ok(self)
     }
@@ -586,18 +593,28 @@ impl Board {
     }
 
     pub fn add_bunny(&mut self, bunny: Bunny) -> Result<(), InvalidBoardError> {
+        if self.bunnies.len() >= 3 {
+            return Err(InvalidBoardError::TooManyBunnies);
+        }
         self.is_bunny_placement_position_valid(bunny.pos)?;
         self.bunnies.push(bunny);
         Ok(())
     }
 
     pub fn add_fox(&mut self, fox: Fox) -> Result<(), InvalidBoardError> {
+        if self.foxes.len() >= 2 {
+            return Err(InvalidBoardError::TooManyFoxes);
+        }
+        let fox = fox.normalize();
         self.is_fox_placement_position_valid(fox.pos1, fox.pos2)?;
         self.foxes.push(fox);
         Ok(())
     }
 
     pub fn add_mushroom(&mut self, mushroom: Mushroom) -> Result<(), InvalidBoardError> {
+        if self.mushrooms.len() >= 3 {
+            return Err(InvalidBoardError::TooManyMushrooms);
+        }
         self.is_mushroom_placement_position_valid(mushroom.pos)?;
         self.mushrooms.push(mushroom);
         Ok(())
@@ -631,9 +648,8 @@ impl Board {
         if self.is_position_filled(pos1) || self.is_position_filled(pos2) {
             return Err(InvalidBoardError::InvalidPosition);
         }
-        if pos1.0.abs_diff(pos2.0) != 1 && pos1.1.abs_diff(pos2.1) == 0
-            || pos1.1.abs_diff(pos2.1) != 1 && pos1.0.abs_diff(pos2.0) == 0
-        {
+        let adjacent = pos1.0.abs_diff(pos2.0) + pos1.1.abs_diff(pos2.1) == 1;
+        if !adjacent {
             return Err(InvalidBoardError::FoxNotConnected);
         }
         if pos1.0 % 2 == 0 && pos1.1 % 2 == 0 || pos2.0 % 2 == 0 && pos2.1 % 2 == 0 {
@@ -808,6 +824,64 @@ mod tests {
         board.add_bunny(Bunny { pos: (0, 0) }).unwrap();
 
         assert!(!board.is_in_win_state());
+    }
+
+    #[test]
+    fn add_fox_normalizes_reversed_endpoints() {
+        let mut board = Board::new();
+        board
+            .add_fox(Fox {
+                pos1: (1, 3),
+                pos2: (0, 3),
+            })
+            .unwrap();
+
+        assert_eq!(
+            board.foxes,
+            vec![Fox {
+                pos1: (0, 3),
+                pos2: (1, 3),
+            }]
+        );
+    }
+
+    #[test]
+    fn invalid_public_mutations_fail_without_changing_the_board() {
+        let mut board = Board::new();
+        board
+            .add_fox(Fox {
+                pos1: (1, 3),
+                pos2: (0, 3),
+            })
+            .unwrap();
+
+        let before = board.clone();
+        assert!(
+            board
+                .add_fox(Fox {
+                    pos1: (1, 1),
+                    pos2: (2, 2),
+                })
+                .is_err()
+        );
+        assert_eq!(board, before);
+
+        assert!(
+            board
+                .clone()
+                .move_fox(
+                    &Fox {
+                        pos1: (3, 3),
+                        pos2: (4, 3),
+                    },
+                    Fox {
+                        pos1: (1, 3),
+                        pos2: (2, 3),
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(board, before);
     }
 
     #[test]
