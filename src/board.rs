@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fmt::Display,
+    fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
 
@@ -100,6 +100,33 @@ pub enum Move {
     Fox { from: u8, to: u8 },
 }
 
+impl Display for Move {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::Bunny { from, to } => write!(
+                formatter,
+                "Rabbit jump: {} -> {}",
+                format_position(*from),
+                format_position(*to)
+            ),
+            Self::Fox { from, to } => {
+                let (from1, from2) = fox_placement_from_id(*from)
+                    .expect("move must contain a valid source fox placement");
+                let (to1, to2) = fox_placement_from_id(*to)
+                    .expect("move must contain a valid target fox placement");
+                write!(
+                    formatter,
+                    "Fox slide: {}-{} -> {}-{}",
+                    format_position(from1),
+                    format_position(from2),
+                    format_position(to1),
+                    format_position(to2)
+                )
+            }
+        }
+    }
+}
+
 impl StateKey {
     pub fn canonical(&self) -> Self {
         let mut symmetries = Symmetry::ALL.into_iter();
@@ -192,6 +219,11 @@ fn position_index(pos: (usize, usize)) -> u8 {
 
 fn position_from_index(index: u8) -> (usize, usize) {
     (index as usize % 5, index as usize / 5)
+}
+
+fn format_position(index: u8) -> String {
+    let (x, y) = position_from_index(index);
+    format!("({x}, {y})")
 }
 
 fn fox_key(fox: &Fox) -> u8 {

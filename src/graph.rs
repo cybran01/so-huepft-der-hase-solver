@@ -160,4 +160,14 @@ mod tests {
             assert!(states[0].can_move_to(&states[1]));
         }
     }
+
+    #[test]
+    fn unsolvable_board_returns_no_solution() {
+        let mut board = Board::new();
+        board.add_bunny(Bunny { pos: (0, 0) }).unwrap();
+
+        let (_, winning_board) = Graph::generate_solution_graph_from_board(&board);
+
+        assert!(winning_board.is_none());
+    }
 }
