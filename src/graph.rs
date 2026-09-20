@@ -157,7 +157,13 @@ mod tests {
         assert_eq!(path.len(), moves.len() + 1);
         assert!(path.last().unwrap().is_in_win_state());
         for states in path.windows(2) {
-            assert!(states[0].can_move_to(&states[1]));
+            assert!(
+                states[0]
+                    .get_all_moves()
+                    .iter()
+                    .filter_map(|movement| states[0].apply_move(movement).ok())
+                    .any(|successor| successor == states[1])
+            );
         }
     }
 

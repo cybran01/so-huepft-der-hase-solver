@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
 };
@@ -349,7 +348,6 @@ impl PartialEq for Board {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum InvalidBoardError {
     InvalidPosition,
@@ -387,7 +385,6 @@ impl Display for Board {
     }
 }
 
-#[allow(dead_code)]
 impl Board {
     pub fn new() -> Self {
         Board {
@@ -411,13 +408,6 @@ impl Board {
             }),
             foxes,
         }
-    }
-
-    pub fn get_all_possible_moves(&self) -> Vec<Board> {
-        self.get_all_moves()
-            .iter()
-            .map(|movement| self.apply_move(movement).unwrap())
-            .collect()
     }
 
     pub fn get_all_moves(&self) -> Vec<Move> {
@@ -473,16 +463,6 @@ impl Board {
         }
     }
 
-    pub fn can_move_to(&self, target: &Board) -> bool {
-        self.get_all_possible_moves()
-            .iter()
-            .any(|possible| possible == target)
-    }
-
-    pub fn get_possible_bunny_moves(&self, bunny: &Bunny) -> Vec<Bunny> {
-        self.get_possible_bunny_moves_with_occupancy(bunny, self.occupied_mask())
-    }
-
     fn get_possible_bunny_moves_with_occupancy(&self, bunny: &Bunny, occupied: u32) -> Vec<Bunny> {
         let mut moves = Vec::new();
 
@@ -519,11 +499,6 @@ impl Board {
             }
         }
         moves
-    }
-
-    // Assumes normalized fox!
-    pub fn get_possible_fox_moves(&self, fox: &Fox) -> Vec<Fox> {
-        self.get_possible_fox_moves_with_occupancy(fox, self.occupied_mask())
     }
 
     fn get_possible_fox_moves_with_occupancy(&self, fox: &Fox, occupied: u32) -> Vec<Fox> {
@@ -583,29 +558,6 @@ impl Board {
         self.foxes.retain(|e| e != &from);
         self.add_fox(to)?;
         Ok(self)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.bunnies.is_empty() && self.foxes.is_empty() && self.mushrooms.is_empty()
-    }
-
-    pub fn get_filled_positions(&self) -> HashSet<(usize, usize)> {
-        let mut filled_positions = HashSet::new();
-
-        for bunny in &self.bunnies {
-            filled_positions.insert(bunny.pos);
-        }
-
-        for fox in &self.foxes {
-            filled_positions.insert(fox.pos1);
-            filled_positions.insert(fox.pos2);
-        }
-
-        for mushroom in &self.mushrooms {
-            filled_positions.insert(mushroom.pos);
-        }
-
-        filled_positions
     }
 
     fn occupied_mask(&self) -> u32 {
@@ -706,80 +658,12 @@ impl Board {
         Ok(())
     }
 
-    fn is_board_valid(&self) -> Result<(), InvalidBoardError> {
-        if self.bunnies.len() > 3 {
-            return Err(InvalidBoardError::TooManyBunnies);
-        }
-        if self.foxes.len() > 2 {
-            return Err(InvalidBoardError::TooManyFoxes);
-        }
-        if self.mushrooms.len() > 3 {
-            return Err(InvalidBoardError::TooManyMushrooms);
-        }
-        Ok(())
-    }
-
     pub fn is_in_win_state(&self) -> bool {
         self.bunnies.len() == 3
             && self
                 .bunnies
                 .iter()
                 .all(|bun| [(0, 0), (0, 4), (2, 2), (4, 0), (4, 4)].contains(&bun.pos))
-    }
-
-    fn transform_board(&self, trafo: impl Fn((usize, usize)) -> (usize, usize)) -> Board {
-        let bunnies = self
-            .bunnies
-            .iter()
-            .map(|bun| Bunny {
-                pos: trafo(bun.pos),
-            })
-            .collect();
-        let mushrooms = self
-            .mushrooms
-            .iter()
-            .map(|mushroom| Mushroom {
-                pos: trafo(mushroom.pos),
-            })
-            .collect();
-        let foxes = self
-            .foxes
-            .iter()
-            .map(|fox| {
-                Fox {
-                    pos1: trafo(fox.pos1),
-                    pos2: trafo(fox.pos2),
-                }
-                .normalize()
-            })
-            .collect();
-        Board {
-            bunnies,
-            foxes,
-            mushrooms,
-        }
-    }
-
-    pub fn rotate90(&self) -> Self {
-        let trafo = |pos: (usize, usize)| (pos.1, 4 - pos.0 as usize);
-        self.transform_board(trafo)
-    }
-
-    pub fn rotate180(&self) -> Self {
-        self.rotate90().rotate90()
-    }
-
-    pub fn rotate270(&self) -> Self {
-        self.rotate180().rotate90()
-    }
-
-    pub fn flip_x(&self) -> Self {
-        let trafo = |pos: (usize, usize)| (4 - pos.0 as usize, pos.1);
-        self.transform_board(trafo)
-    }
-
-    pub fn flip_y(&self) -> Self {
-        self.flip_x().rotate180()
     }
 }
 
@@ -816,7 +700,11 @@ mod tests {
 
         for (index, states) in states.windows(2).enumerate() {
             assert!(
-                states[1].can_move_to(&states[0]),
+                states[0]
+                    .get_all_moves()
+                    .iter()
+                    .filter_map(|movement| states[0].apply_move(movement).ok())
+                    .any(|successor| successor == states[1]),
                 "illegal transition between states {} and {}",
                 index,
                 index + 1
